@@ -1,7 +1,7 @@
 {
   "name": "koishi-plugin-midjourney-discord",
-  "description": "",
-  "version": "0.0.1",
+  "description": "调用 Midjourney Discord API，让您可以在多个平台上生成精美的图片！🎨",
+  "version": "1.0.1",
   "main": "lib/index.js",
   "typings": "lib/index.d.ts",
   "files": [
@@ -9,13 +9,25 @@
     "dist"
   ],
   "license": "MIT",
+  "author": "Nawyjx <3373167460@qq.com>",
+  "homepage": "https://www.npmjs.com/package/koishi-plugin-midjourney-discord",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/araea/koishi-plugin-midjourney-discord.git"
+  },
   "scripts": {},
   "keywords": [
     "chatbot",
     "koishi",
-    "plugin"
+    "plugin",
+    "koishi-plugin-midjourney-discord",
+    "midjourney",
+    "midjourney-proxy"
   ],
   "peerDependencies": {
     "koishi": "^4.14.0"
+  },
+  "dependencies": {
+    "midjourney": "^4.3.11"
   }
 }
