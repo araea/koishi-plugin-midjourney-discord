@@ -22,6 +22,8 @@ export const usage = `## 🎮 使用
 
 - \`mj\`：查看 Midjourney 帮助。
 - \`mj.clear\`：清空 MJ 任务表。
+- \`mj.info\`：查看 MJ 信息。
+- \`mj.parameterList\`：查看 MJ 参数列表。
 - \`mj.imagine <prompt>\`：根据文字提示 \`<prompt>\` 绘制一张图片。
 - \`mj.reroll <taskId>\`：重新绘制任务 \`<taskId>\` 的图片。
 - \`mj.upscale <taskId> <index>\`：放大任务 \`<taskId>\` 的图片中的某一部分，\`<index>\` 可以是 1、2、3 或 4，分别对应图片的左上、右上、左下和右下四个区域。
@@ -127,6 +129,44 @@ function registerAllKoishiCommands(ctx: Context, client: Midjourney) {
       await ctx.model.remove(MJ_TASKS_ID, {})
       return message.cleared
     })
+  // info
+  ctx.command('mj.info', '查看 MJ 信息')
+    .action(async () => {
+      const msg = await client.Info();
+      const formattedMsg = `
+    Subscription: ${msg.subscription}
+    Job Mode: ${msg.jobMode}
+    Visibility Mode: ${msg.visibilityMode}
+    Fast Time Remaining: ${msg.fastTimeRemaining}
+    Lifetime Usage: ${msg.lifetimeUsage}
+    Relaxed Usage: ${msg.relaxedUsage}
+    Queued Jobs (Fast): ${msg.queuedJobsFast}
+    Queued Jobs (Relax): ${msg.queuedJobsRelax}
+    Running Jobs: ${msg.runningJobs}
+    `;
+      return formattedMsg
+    })
+  // 参数列表
+  ctx.command('mj.parameterList', '查看 MJ 参数列表')
+    .action(async () => {
+      return `📗 参数列表
+1. --ar 横纵比 n:n 默认1:1。用于指定绘制图像的横纵比。
+2. --chaos <number 0–100> 变化程度，数值越高结果越不寻常和意想不到。用于控制图像的抽象程度。
+3. --fast 使用快速模式运行单个任务。加快任务完成速度，但可能降低图像质量。
+4. --iw <0–2> 设置图像提示权重相对于文本权重，默认值为1。用于控制图像与文本提示之间的权重分配。
+5. --no 反向提示，例如 --no plants 会尝试从图像中移除植物。用于在图像中排除某些元素。
+6. --q 清晰度 .25 .5 1 分别代表: 一般,清晰,高清，默认1。控制图像的清晰度，较高的值会提高图像质量，但可能需要更长的处理时间。
+7. --relax 使用放松模式运行单个任务。在较短的时间内生成较为轻松的图像。
+8. --seed <0–4294967295> 用于生成初始图像网格的种子数，相同的种子数和提示将产生相似的最终图像。用于控制图像的随机性。
+9. --stop <10–100> 在过程中部分完成任务，较早停止的任务可能产生模糊、细节较少的结果。用于在图像生成过程中提前停止，以节省时间。
+10. --style <raw, 4a, 4b, 4c, cute, expressive, original, scenic> 切换不同的Midjourney模型版本和Niji模型版本。选择不同的绘画风格。
+11. --s 风格化 1-1000 影响默认美学风格在任务中的应用程度。用于调整风格强度。
+12. --tile 生成可用于创建无缝图案的重复图块的图像。生成可用于平铺的图像。
+13. --turbo 使用涡轮模式运行单个任务。加快任务完成速度，但可能降低图像质量。
+14. --weird <0–3000> 使用实验性参数 --weird 探索不寻常的美学。生成具有独特风格的图像。
+15. --version <1, 2, 3, 4, 5, 5.1, or 5.2> 使用不同版本的Midjourney算法。选择不同的绘画算法版本。
+16. --niji 使用专注于动漫风格图像的替代模型。生成具有日本动漫风格的图像。`
+    })
   // imagine
   ctx.command('mj.imagine <prompt:text>', '绘图')
     .action(async ({ session }, prompt) => {
@@ -137,8 +177,6 @@ function registerAllKoishiCommands(ctx: Context, client: Midjourney) {
 
       // 使用 Imagine 方法生成一张图片
       const result = await client.Imagine(prompt);
-      console.log(result);
-
       // 判断是否生成成功
       if (!result) {
         return message.error
@@ -246,9 +284,6 @@ function registerAllKoishiCommands(ctx: Context, client: Midjourney) {
           msgId: taskInfo[0].taskId,
           flags: taskInfo[0].taskFlags,
           customId: customId,
-          loading: (uri: string, progress: string) => {
-            console.log("loading", uri, "progress", progress);
-          },
         });
         await ctx.model.create(MJ_TASKS_ID, { userId: session.userId, taskId: result.id, taskHash: result.hash, taskFlags: result.flags, taskPrompt: taskInfo[0].taskPrompt })
         await session.send(`${h.at(session.userId)}\n${h.image(result.proxy_url)}\n提示词：${taskInfo[0].taskPrompt}\n\n任务Id：${result.id}`)

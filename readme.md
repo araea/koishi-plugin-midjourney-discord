@@ -31,6 +31,8 @@
 
 - `mj`：查看 Midjourney 帮助。
 - `mj.clear`：清空 MJ 任务表。
+- `mj.info`：查看 MJ 信息。
+- `mj.parameterList`：查看 MJ 参数列表。
 - `mj.imagine <prompt>`：根据文字提示 `<prompt>` 绘制一张图片。
 - `mj.reroll <taskId>`：重新绘制任务 `<taskId>` 的图片。
 - `mj.upscale <taskId> <index>`：放大任务 `<taskId>` 的图片中的某一部分，`<index>` 可以是 1、2、3 或 4，分别对应图片的左上、右上、左下和右下四个区域。
