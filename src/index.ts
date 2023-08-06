@@ -113,7 +113,7 @@ function registerAllKoishiCommands(ctx: Context, client: Midjourney) {
   // 消息
   const message = {
     received: '嗯~',
-    error: '傻瓜~ 出错了啦 ~~',
+    error: '傻瓜~ 出错了啦 ~~ 重试一下？',
     noSuchMethod: '该任务可能没有此方法哦~',
     cleared: '任务清理成功！',
   } as const;
@@ -132,19 +132,23 @@ function registerAllKoishiCommands(ctx: Context, client: Midjourney) {
   // info
   ctx.command('mj.info', '查看 MJ 信息')
     .action(async () => {
-      const msg = await client.Info();
-      const formattedMsg = `
-    Subscription: ${msg.subscription}
-    Job Mode: ${msg.jobMode}
-    Visibility Mode: ${msg.visibilityMode}
-    Fast Time Remaining: ${msg.fastTimeRemaining}
-    Lifetime Usage: ${msg.lifetimeUsage}
-    Relaxed Usage: ${msg.relaxedUsage}
-    Queued Jobs (Fast): ${msg.queuedJobsFast}
-    Queued Jobs (Relax): ${msg.queuedJobsRelax}
-    Running Jobs: ${msg.runningJobs}
-    `;
-      return formattedMsg
+      try {
+        const msg = await client.Info();
+const formattedMsg = `
+订阅类型: ${msg.subscription}
+作业模式: ${msg.jobMode}
+可见性模式: ${msg.visibilityMode}
+剩余快速作业时间: ${msg.fastTimeRemaining}
+终身使用量: ${msg.lifetimeUsage}
+休闲使用量: ${msg.relaxedUsage}
+快速作业队列: ${msg.queuedJobsFast}
+休闲作业队列: ${msg.queuedJobsRelax}
+正在运行的作业数: ${msg.runningJobs}
+`;
+        return formattedMsg
+      } catch (error) {
+        return message.error
+      }
     })
   // 参数列表
   ctx.command('mj.parameterList', '查看 MJ 参数列表')
