@@ -1,7 +1,7 @@
 {
   "name": "koishi-plugin-midjourney-discord",
   "description": "调用 Midjourney Discord API，让您可以在多个平台上生成精美的图片！🎨",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "main": "lib/index.js",
   "typings": "lib/index.d.ts",
   "files": [

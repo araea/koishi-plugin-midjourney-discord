@@ -1,14 +1,15 @@
-import { Context, Schema, h } from 'koishi'
-import { Midjourney } from "midjourney";
+import { Context, Logger, Schema, h, is } from 'koishi'
+import { MJOptions, Midjourney } from "midjourney";
 
 export const name = 'midjourney-discord'
+export const logger = new Logger('Midjourney')
 export const usage = `## 🎮 使用
 
-- 使用魔法，搞到配置项
-- 启动插件，等待 Koishi 的指令出现
-- 若控制台出现 \`TypeError: fetch failed\`，重启插件即可
-- 如出错，重试任务即可
+- 订阅 Midjourney 会员
+- 根据配置项获取教程填写配置项
+- 启动插件等待指令出现即可
 - 建议为各指令添加合适的指令别名
+- 控制台日志中的 \`一言\` 为自动重试记录
 
 ## 配置
 
@@ -25,11 +26,16 @@ export const usage = `## 🎮 使用
 - \`mj.info\`：查看 MJ 信息。
 - \`mj.parameterList\`：查看 MJ 参数列表。
 - \`mj.imagine <prompt>\`：根据文字提示 \`<prompt>\` 绘制一张图片。
+- \`mj.blend <url1:string> <url2:string>\`：融合。
+- \`mj.facewap <source:string> <target:string>\`：换脸。
+- \`mj.shorten <prompt:text>\`：优化提示。
+- \`mj.describe <url:text>\`：描述一张图片。
 - \`mj.reroll <taskId>\`：重新绘制任务 \`<taskId>\` 的图片。
 - \`mj.upscale <taskId> <index>\`：放大任务 \`<taskId>\` 的图片中的某一部分，\`<index>\` 可以是 1、2、3 或 4，分别对应图片的左上、右上、左下和右下四个区域。
 - \`mj.variation <taskId> <index>\`：变换任务 \`<taskId>\` 的图片中的某一部分，\`<index>\` 可以是 1、2、3 或 4，分别对应图片的左上、右上、左下和右下四个区域。
-- \`mj.vary <taskId> <index>\`：在放大后再变换任务 \`<taskId>\` 的图片中的某一部分，\`<index>\` 可以是 1 或 2，分别对应 Vary (Strong) 和 Vary (Subtle) 两种变换方式。
-- \`mj.zoomout <taskId> <level>\`：拉远任务 \`<taskId>\` 的图片，使其显示更多背景细节，\`<level>\` 可以是 "high"、"low"、"2x" 或 "1.5x"，分别对应不同的拉远程度。
+- \`mj.vary <taskId> <index>\`：变化比较任务 \`<taskId>\` 的图片中的某一部分，\`<index>\` 可以是 1 或 2，分别对应 Vary (Strong) 和 Vary (Subtle) 两种变换方式。
+- \`mj.zoomout <taskId> <level>\`：拉远/扩展任务 \`<taskId>\` 的图片，使其显示更多背景细节，\`<level>\` 可以是  "2x" 或 "1.5x" 或 "custom" 分别对应不同的拉远程度。
+- \`mj.pan <taskId:string> <index:number>\`：平移。
 
 每次使用以上命令时，都会生成一个新的任务 ID，并将其保存在数据库中。
 
@@ -39,8 +45,9 @@ export const usage = `## 🎮 使用
 
 ## 🌠 后续计划
 
-- ⬆️、⬇️、⬅️、➡️
-- 由于本神尊使用传说中的猫猫适配器，所以获取不到（我也不造）可用的图片 url，所以 blend、describe、faceSwap 等功能无法测试，就没...`
+- 自动图转 url
+- 引用图片发送指令
+`
 
 // ServerId ChannelId SalaiToken
 export interface Config {
@@ -69,8 +76,7 @@ export interface MidjourneyTasks {
   taskHash: string
   taskFlags: number
   taskPrompt: string
-  varyStrong: string
-  varySubtle: string
+  options: MJOptions[]
 }
 
 
@@ -79,10 +85,10 @@ export async function apply(ctx: Context, config: Config) {
   // 拓展表
   extendAllTables(ctx)
 
-  // 获取客户端
-  const client = await initClient(config.ServerId, config.ChannelId, config.SalaiToken)
+  // 使用重试函数来初始化客户端
+  const client = await retry(() => initClient(config.ServerId, config.ChannelId, config.SalaiToken));
 
-  // 注册指令 - mj imagine reroll upscale variation vary zoomout blend describe shorten
+  // 注册指令 - mj imagine blend facewap shorten describe reroll upscale variation vary zoomout pan 
   registerAllKoishiCommands(ctx, client)
 
   // 消除副作用
@@ -101,6 +107,7 @@ function extendAllTables(ctx: Context) {
     taskHash: 'string',
     taskFlags: 'integer',
     taskPrompt: 'string',
+    options: 'json'
   }, {
     // 使用自增的主键值
     autoInc: true,
@@ -116,6 +123,7 @@ function registerAllKoishiCommands(ctx: Context, client: Midjourney) {
     error: '傻瓜~ 出错了啦 ~~ 重试一下？',
     noSuchMethod: '该任务可能没有此方法哦~',
     cleared: '任务清理成功！',
+    invalidUrl: '请输入有效的 url！'
   } as const;
 
   // mj
@@ -124,34 +132,50 @@ function registerAllKoishiCommands(ctx: Context, client: Midjourney) {
       session.execute(`mj -h`)
     })
   // clear
-  ctx.command('mj.clear', '清空 MJ 任务表')
+  ctx.command('mj.clear', '清空任务表')
     .action(async () => {
       await ctx.model.remove(MJ_TASKS_ID, {})
       return message.cleared
     })
   // info
-  ctx.command('mj.info', '查看 MJ 信息')
-    .action(async () => {
+  ctx.command('mj.info', '查看 Info 信息')
+    .action(async ({ session }) => {
       try {
-        const msg = await client.Info();
-const formattedMsg = `
-订阅类型: ${msg.subscription}
-作业模式: ${msg.jobMode}
-可见性模式: ${msg.visibilityMode}
-剩余快速作业时间: ${msg.fastTimeRemaining}
-终身使用量: ${msg.lifetimeUsage}
-休闲使用量: ${msg.relaxedUsage}
-快速作业队列: ${msg.queuedJobsFast}
-休闲作业队列: ${msg.queuedJobsRelax}
-正在运行的作业数: ${msg.runningJobs}
-`;
-        return formattedMsg
+        await session.send(message.received)
+        // 使用async/await语法
+        const obj = await retry(() => client.Info());
+        // 使用Object.entries()方法
+        let entries = Object.entries(obj);
+        // 定义一个字典，将英文的属性名替换成中文的属性名
+        const dict = {
+          subscription: '订阅类型',
+          jobMode: '工作模式',
+          visibilityMode: '可见性模式',
+          fastTimeRemaining: '快速模式剩余时间',
+          lifetimeUsage: '总使用量',
+          relaxedUsage: '放松模式使用量',
+          queuedJobsFast: '快速模式排队任务数',
+          queuedJobsRelax: '放松模式排队任务数',
+          runningJobs: '正在运行的任务'
+        };
+        // 使用String.prototype.replace()方法的第二个参数为一个函数
+        // 使用字符串插值
+        let text = entries.map(([key, value]) => {
+          return `${dict[key]}：${value.replace(/<t:(\d+)>/, (match: any, p1: number) => {
+            // 使用Date.prototype.toLocaleDateString()方法
+            return `<t:${new Date(p1 * 1000).toLocaleDateString()}>`;
+          })}`;
+        }).join('\n');
+        return text;
       } catch (error) {
-        return message.error
+        return message.error;
       }
+
+
+
     })
   // 参数列表
-  ctx.command('mj.parameterList', '查看 MJ 参数列表')
+  ctx.command('mj.parameterList', '参数列表')
     .action(async () => {
       return `📗 参数列表
 1. --ar 横纵比 n:n 默认1:1。用于指定绘制图像的横纵比。
@@ -180,14 +204,84 @@ const formattedMsg = `
       await session.send(message.received)
 
       // 使用 Imagine 方法生成一张图片
-      const result = await client.Imagine(prompt);
+      const result = await retry(() => client.Imagine(prompt))
       // 判断是否生成成功
       if (!result) {
         return message.error
       }
 
-      await ctx.model.create(MJ_TASKS_ID, { userId: session.userId, taskId: result.id, taskHash: result.hash, taskFlags: result.flags, taskPrompt: prompt })
-      await session.send(`${h.at(session.userId)}\n${h.image(result.proxy_url)}\n提示词：${prompt}\n\n任务Id：${result.id}`)
+      await ctx.model.create(MJ_TASKS_ID, { userId: session.userId, taskId: result.id, taskHash: result.hash, taskFlags: result.flags, taskPrompt: prompt, options: result.options })
+      await sendMsg(session, session.userId, result.proxy_url, prompt, result.id)
+    })
+  // blend
+  ctx.command('mj.blend <url1:string> <url2:string>', '融合')
+    .action(async ({ session }, url1, url2) => {
+      if (!url1 || !url2 || !isValidUrl(url1) || !isValidUrl(url2)) {
+        return message.invalidUrl
+      }
+      await session.send(message.received)
+
+      // 使用 Imagine 方法生成一张图片
+      const result = await retry(() => client.Imagine(`${url1} ${url2}`))
+      // 判断是否生成成功
+      if (!result) {
+        return message.error
+      }
+
+      await ctx.model.create(MJ_TASKS_ID, { userId: session.userId, taskId: result.id, taskHash: result.hash, taskFlags: result.flags, taskPrompt: `${url1} ${url2}`, options: result.options })
+      await sendMsg(session, session.userId, result.proxy_url, `${url1} ${url2}`, result.id)
+    })
+  // facewap
+  ctx.command('mj.facewap <source:string> <target:string>', '换脸')
+    .action(async ({ session }, source, target) => {
+      if (!source || !target || !isValidUrl(source) || !isValidUrl(target)) {
+        return message.invalidUrl
+      }
+      await session.send(message.received)
+
+      // 使用 Imagine 方法生成一张图片
+      const result = await retry(() => client.FaceSwap(target, source))
+      // 判断是否生成成功
+      if (!result) {
+        return message.error
+      }
+      await session.send(h.image(result.proxy_url))
+    })
+  // shorten
+  ctx.command('mj.shorten <prompt:text>', '优化提示')
+    .action(async ({ session }, prompt) => {
+      if (!prompt) {
+        return
+      }
+      await session.send(message.received)
+
+      // 使用 Imagine 方法生成一张图片
+      const result = await retry(() => client.Shorten(prompt))
+      // 判断是否生成成功
+      if (!result) {
+        return message.error
+      }
+      return `${h.at(session.userId)} ~\n优化提示成功！\n优化后的提示词：\n${result.prompts.join("\n")}`;
+    })
+  // describe
+  ctx.command('mj.describe <url:text>', '描述一张图片')
+    .action(async ({ session }, url) => {
+
+
+      if (!url || !isValidUrl(url)) {
+        return message.invalidUrl
+      }
+
+
+      await session.send(message.received)
+
+      // 使用 Imagine 方法生成一张图片
+      const result = await retry(() => client.Describe(url))
+      // 判断是否生成成功
+      if (!result) {
+        return message.error
+      }
+      return `${h.at(session.userId)} ~\n描述成功！\n${result.descriptions.join("\n")}`;
     })
   // reroll
   ctx.command('mj.reroll <taskId:string>', '重新绘制')
@@ -197,17 +291,17 @@ const formattedMsg = `
       }
       const taskInfo = await ctx.model.get(MJ_TASKS_ID, { taskId: taskId })
       await session.send(message.received)
-      try {
-        const result = await client.Reroll({
-          msgId: taskInfo[0].taskId,
-          hash: taskInfo[0].taskHash,
-          flags: taskInfo[0].taskFlags,
-        });
-        await ctx.model.create(MJ_TASKS_ID, { userId: session.userId, taskId: result.id, taskHash: result.hash, taskFlags: result.flags, taskPrompt: taskInfo[0].taskPrompt })
-        await session.send(`${h.at(session.userId)}\n${h.image(result.proxy_url)}\n提示词：${taskInfo[0].taskPrompt}\n\n任务Id：${result.id}`)
-      } catch (error) {
+      const rerollCustomID = taskInfo[0].options?.find((o) => o.label === "🔄")?.custom;
+      if (!rerollCustomID) {
         return message.noSuchMethod
       }
+      const result = await retry(() => client.Custom({
+        msgId: taskInfo[0].taskId,
+        customId: rerollCustomID,
+        flags: taskInfo[0].taskFlags,
+      }))
+      await ctx.model.create(MJ_TASKS_ID, { userId: session.userId, taskId: result.id, taskHash: result.hash, taskFlags: result.flags, taskPrompt: taskInfo[0].taskPrompt, options: result.options })
+      await sendMsg(session, session.userId, result.proxy_url, taskInfo[0].taskPrompt, result.id)
     })
   // upscale
   ctx.command('mj.upscale <taskId:string> <index:number>', '放大')
@@ -222,18 +316,17 @@ const formattedMsg = `
       }
       const taskInfo = await ctx.model.get(MJ_TASKS_ID, { taskId: taskId })
       await session.send(message.received)
-      try {
-        const result = await client.Upscale({
-          index: index,
-          msgId: taskInfo[0].taskId as string,
-          hash: taskInfo[0].taskHash,
-          flags: taskInfo[0].taskFlags,
-        });
-        await ctx.model.create(MJ_TASKS_ID, { userId: session.userId, taskId: result.id, taskHash: result.hash, taskFlags: result.flags, taskPrompt: taskInfo[0].taskPrompt })
-        await session.send(`${h.at(session.userId)}\n${h.image(result.proxy_url)}\n提示词：${taskInfo[0].taskPrompt}\n\n任务Id：${result.id}`)
-      } catch (error) {
+      const upscaleCustomID = taskInfo[0].options?.find((o) => o.label === `U${index}`)?.custom;
+      if (!upscaleCustomID) {
         return message.noSuchMethod
       }
+      const result = await retry(() => client.Custom({
+        msgId: taskInfo[0].taskId as string,
+        customId: upscaleCustomID,
+        flags: taskInfo[0].taskFlags,
+      }))
+      await ctx.model.create(MJ_TASKS_ID, { userId: session.userId, taskId: result.id, taskHash: result.hash, taskFlags: result.flags, taskPrompt: taskInfo[0].taskPrompt, options: result.options })
+      await sendMsg(session, session.userId, result.proxy_url, taskInfo[0].taskPrompt, result.id)
     })
   // variation
   ctx.command('mj.variation <taskId:string> <index:number>', '变换')
@@ -248,21 +341,20 @@ const formattedMsg = `
       }
       const taskInfo = await ctx.model.get(MJ_TASKS_ID, { taskId: taskId })
       await session.send(message.received)
-      try {
-        const result = await client.Variation({
-          index: index,
-          msgId: taskInfo[0].taskId,
-          hash: taskInfo[0].taskHash,
-          flags: taskInfo[0].taskFlags,
-        });
-        await ctx.model.create(MJ_TASKS_ID, { userId: session.userId, taskId: result.id, taskHash: result.hash, taskFlags: result.flags, taskPrompt: taskInfo[0].taskPrompt })
-        await session.send(`${h.at(session.userId)}\n${h.image(result.proxy_url)}\n提示词：${taskInfo[0].taskPrompt}\n\n任务Id：${result.id}`)
-      } catch (error) {
+      const variationCustomID = taskInfo[0].options?.find((o) => o.label === `V${index}`)?.custom;
+      if (!variationCustomID) {
         return message.noSuchMethod
       }
+      const result = await retry(() => client.Custom({
+        msgId: taskInfo[0].taskId,
+        customId: variationCustomID,
+        flags: taskInfo[0].taskFlags,
+      }))
+      await ctx.model.create(MJ_TASKS_ID, { userId: session.userId, taskId: result.id, taskHash: result.hash, taskFlags: result.flags, taskPrompt: taskInfo[0].taskPrompt, options: result.options })
+      await sendMsg(session, session.userId, result.proxy_url, taskInfo[0].taskPrompt, result.id)
     })
   // vary
-  ctx.command('mj.vary <taskId:string> <index:number>', '放大后的再变换')
+  ctx.command('mj.vary <taskId:string> <index:number>', '变化比较')
     .action(async ({ session }, taskId: string, index: 1 | 2 | 3 | 4) => {
       if (!taskId) {
         return
@@ -273,56 +365,98 @@ const formattedMsg = `
         return;
       }
       const taskInfo = await ctx.model.get(MJ_TASKS_ID, { taskId: taskId })
-      if (!taskInfo[0].varyStrong || !taskInfo[0].varySubtle) {
-        return message.noSuchMethod
-      }
-      let customId: string;
+      let customName: string;
       if (index === 1) {
-        customId = taskInfo[0].varyStrong
+        customName = 'Vary (Strong)'
       } else {
-        customId = taskInfo[0].varySubtle
+        customName = 'Vary (Subtle)'
       }
       await session.send(message.received)
-      try {
-        const result = await client.Custom({
-          msgId: taskInfo[0].taskId,
-          flags: taskInfo[0].taskFlags,
-          customId: customId,
-        });
-        await ctx.model.create(MJ_TASKS_ID, { userId: session.userId, taskId: result.id, taskHash: result.hash, taskFlags: result.flags, taskPrompt: taskInfo[0].taskPrompt })
-        await session.send(`${h.at(session.userId)}\n${h.image(result.proxy_url)}\n提示词：${taskInfo[0].taskPrompt}\n\n任务Id：${result.id}`)
-      } catch (error) {
+      const varyCustomID = taskInfo[0].options?.find((o) => o.label === `${customName}`)?.custom;
+      if (!varyCustomID) {
         return message.noSuchMethod
       }
+      const result = await retry(() => client.Custom({
+        msgId: taskInfo[0].taskId,
+        customId: varyCustomID,
+        flags: taskInfo[0].taskFlags,
+      }))
+      await ctx.model.create(MJ_TASKS_ID, { userId: session.userId, taskId: result.id, taskHash: result.hash, taskFlags: result.flags, taskPrompt: taskInfo[0].taskPrompt, options: result.options })
+      await sendMsg(session, session.userId, result.proxy_url, taskInfo[0].taskPrompt, result.id)
     })
   // zoomout
-  ctx.command('mj.zoomout <taskId:string> <level:string>', '拉远')
-    .action(async ({ session }, taskId: string, level: "high" | "low" | "2x" | "1.5x") => {
+  ctx.command('mj.zoomout <taskId:string> <level:string>', '拉远/扩展')
+    .action(async ({ session }, taskId: string, level: "2x" | "1.5x" | "custom") => {
       if (!taskId) {
         return
       }
       // 检查 level 是否是一个有效的字符串
-      if (!["high", "low", "2x", "1.5x"].includes(level)) {
-        await session.send('请提供有效的 level 参数 ("high", "low", "2x", "1.5x")。');
+      if (!["2x", "1.5x", "custom"].includes(level)) {
+        await session.send('请提供有效的 level 参数 ("2x", "1.5x", ""custom"")。');
+        return
+      }
+      const taskInfo = await ctx.model.get(MJ_TASKS_ID, { taskId: taskId })
+      let customName: string;
+      if (level === '2x') {
+        customName = 'Zoom Out 2x'
+      } else if (level === '1.5x') {
+        customName = 'Zoom Out 1.5x'
+      } else {
+        customName = 'Custom Zoom'
+      }
+      await session.send(message.received)
+      const zoomoutCustomID = taskInfo[0].options?.find((o) => o.label === `${customName}`)?.custom;
+      if (!zoomoutCustomID) {
+        return message.noSuchMethod
+      }
+      const result = await retry(() => client.Custom({
+        msgId: taskInfo[0].taskId,
+        customId: zoomoutCustomID,
+        flags: taskInfo[0].taskFlags,
+      }))
+      await ctx.model.create(MJ_TASKS_ID, { userId: session.userId, taskId: result.id, taskHash: result.hash, taskFlags: result.flags, taskPrompt: taskInfo[0].taskPrompt, options: result.options })
+      await sendMsg(session, session.userId, result.proxy_url, taskInfo[0].taskPrompt, result.id)
+    })
+
+  // pan
+  ctx.command('mj.pan <taskId:string> <index:number>', '平移')
+    .action(async ({ session }, taskId: string, index: 1 | 2 | 3 | 4) => {
+      if (!taskId) {
+        return
+      }
+      // 检查 index 是否是一个有效的数字
+      if (![1, 2, 3, 4].includes(index)) {
+        await session.send('请提供有效的索引(1、2、3或4)。\n1：⬆️\n2：⬇️\n3：⬅️\n4：➡️');
         return;
       }
       const taskInfo = await ctx.model.get(MJ_TASKS_ID, { taskId: taskId })
+      let customName: string;
+      if (index === 1) {
+        customName = '⬆️'
+      } else if (index === 2) {
+        customName = '⬇️'
+      } else if (index === 3) {
+        customName = '⬅️'
+      } else {
+        customName = '➡️'
+      }
       await session.send(message.received)
-      try {
-        const result = await client.ZoomOut({
-          level: level,
-          msgId: taskInfo[0].taskId,
-          hash: taskInfo[0].taskHash,
-          flags: taskInfo[0].taskFlags,
-        });
-        await ctx.model.create(MJ_TASKS_ID, { userId: session.userId, taskId: result.id, taskHash: result.hash, taskFlags: result.flags, taskPrompt: taskInfo[0].taskPrompt })
-        await session.send(`${h.at(session.userId)}\n${h.image(result.proxy_url)}\n提示词：${taskInfo[0].taskPrompt}\n\n任务Id：${result.id}`)
-      } catch (error) {
+      const panCustomID = taskInfo[0].options?.find((o) => o.label === `${customName}`)?.custom;
+      if (!panCustomID) {
         return message.noSuchMethod
       }
+      const result = await retry(() => client.Custom({
+        msgId: taskInfo[0].taskId,
+        customId: panCustomID,
+        flags: taskInfo[0].taskFlags,
+      }))
+      await ctx.model.create(MJ_TASKS_ID, { userId: session.userId, taskId: result.id, taskHash: result.hash, taskFlags: result.flags, taskPrompt: taskInfo[0].taskPrompt, options: result.options })
+      await sendMsg(session, session.userId, result.proxy_url, taskInfo[0].taskPrompt, result.id)
     })
+
 }
 
+// 初始化客户端
 async function initClient(SERVER_ID: string, CHANNEL_ID: string, SALAI_TOKEN: string) {
   const client = new Midjourney({
     ServerId: SERVER_ID,
@@ -335,7 +469,66 @@ async function initClient(SERVER_ID: string, CHANNEL_ID: string, SALAI_TOKEN: st
   return client
 }
 
-// 定义一个通用的获取选项函数，用于根据标签获取自定义ID
-const getOption = (options: any[], label: string) => {
-  return options?.find((o) => o.label === label)?.custom;
-};
+// 定义一个辅助函数来重试具有指数回退的函数
+async function retry<T>(
+  func: () => Promise<T>,
+  retries = 3,
+  delay = 500,
+): Promise<T> {
+  let lastError: Error;
+  for (let i = 0; i < retries; i++) {
+    try {
+      return await func();
+    } catch (error) {
+      // 定义一个函数，用于请求一言的 api
+      async function requestHitokoto() {
+        // 使用fetch方法来发送请求
+        const response = await fetch('https://v1.hitokoto.cn/');
+        // 判断响应是否成功
+        if (response.ok) {
+          // 解析响应为json格式
+          const data = await response.json();
+          // 返回一言的内容
+          return data.hitokoto;
+        } else {
+          // 抛出错误信息
+          throw new Error(`请求失败，状态码：${response.status}`);
+        }
+      }
+
+      // 定义一个函数，用于显示提示词
+      async function showTip() {
+        try {
+          // 调用 requestHitokoto 函数来获取一言
+          // 使用重试函数来请求一言的 api
+          const hitokoto = await retry(() => requestHitokoto());
+
+          // 记录提示
+          logger.error(hitokoto);
+        } catch (error) {
+          // 记录错误
+          logger.error(error.message);
+        }
+      }
+      await showTip();
+      lastError = error;
+      await new Promise((resolve) => setTimeout(resolve, delay * (2 ** i)));
+    }
+  }
+  throw lastError;
+}
+
+async function sendMsg(session: any, userId: string, proxy_url: string, prompt: string, id: string) {
+  await session.send(`${h.at(userId)}\n${h.image(proxy_url)}\n提示词：${prompt}\n\n任务Id：${id}`)
+}
+
+// 定义判断 url 是否有效的函数
+function isValidUrl(string: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(string);
+  } catch (_) {
+    return false;
+  }
+  return true;
+}

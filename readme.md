@@ -13,11 +13,10 @@
 ```
 ## 🎮 使用
 
-- 填写配置项
-- 启动插件，等待 Koishi 的指令出现
-- 若控制台出现 `TypeError: fetch failed`，重启插件即可
-- 如出错，重试任务即可
+- 使用魔法，搞到配置项
+- 启动插件等待指令出现即可
 - 建议为各指令添加合适的指令别名
+- 控制台日志中的 `一言` 为自动重试记录
 
 ## 配置
 
@@ -34,11 +33,16 @@
 - `mj.info`：查看 MJ 信息。
 - `mj.parameterList`：查看 MJ 参数列表。
 - `mj.imagine <prompt>`：根据文字提示 `<prompt>` 绘制一张图片。
+- `mj.blend <url1:string> <url2:string>`：融合。
+- `mj.facewap <source:string> <target:string>`：换脸。
+- `mj.shorten <prompt:text>`：优化提示。
+- `mj.describe <url:text>`：描述一张图片。
 - `mj.reroll <taskId>`：重新绘制任务 `<taskId>` 的图片。
 - `mj.upscale <taskId> <index>`：放大任务 `<taskId>` 的图片中的某一部分，`<index>` 可以是 1、2、3 或 4，分别对应图片的左上、右上、左下和右下四个区域。
 - `mj.variation <taskId> <index>`：变换任务 `<taskId>` 的图片中的某一部分，`<index>` 可以是 1、2、3 或 4，分别对应图片的左上、右上、左下和右下四个区域。
-- `mj.vary <taskId> <index>`：在放大后再变换任务 `<taskId>` 的图片中的某一部分，`<index>` 可以是 1 或 2，分别对应 Vary (Strong) 和 Vary (Subtle) 两种变换方式。
-- `mj.zoomout <taskId> <level>`：拉远任务 `<taskId>` 的图片，使其显示更多背景细节，`<level>` 可以是 "high"、"low"、"2x" 或 "1.5x"，分别对应不同的拉远程度。
+- `mj.vary <taskId> <index>`：变化比较任务 `<taskId>` 的图片中的某一部分，`<index>` 可以是 1 或 2，分别对应 Vary (Strong) 和 Vary (Subtle) 两种变换方式。
+- `mj.zoomout <taskId> <level>`：拉远/扩展任务 `<taskId>` 的图片，使其显示更多背景细节，`<level>` 可以是  "2x" 或 "1.5x" 或 "custom" 分别对应不同的拉远程度。
+- `mj.pan <taskId:string> <index:number>`：平移。
 
 每次使用以上命令时，都会生成一个新的任务 ID，并将其保存在数据库中。
 
@@ -48,8 +52,8 @@
 
 ## 🌠 后续计划
 
-- ⬆️、⬇️、⬅️、➡️
-- 由于本神尊使用传说中的猫猫适配器，所以获取不到（我也不造）可用的图片 url，所以 blend、describe、faceSwap 等功能无法测试，就没...
+- 自动图转 url
+- 引用图片发送指令
 
 ## 🙏 致谢
 
